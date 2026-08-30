@@ -19,7 +19,7 @@ def get_gemini_api_key() -> Optional[str]:
     except Exception:
         pass
 
-    return ""
+    return os.environ.get("GEMINI_API_KEY", "")
 
 def call_gemini(prompt: str, system_instruction: str = "", model: str = "gemini-3.5-flash-lite") -> Optional[str]:
     """
