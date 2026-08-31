@@ -21,14 +21,19 @@ def get_gemini_api_key() -> Optional[str]:
 
     return os.environ.get("GEMINI_API_KEY", "")
 
-def call_gemini(prompt: str, system_instruction: str = "", model: str = "gemini-3.5-flash-lite") -> Optional[str]:
+def call_gemini(
+    prompt: str,
+    system_instruction: str = "",
+    model: str = "gemini-2.5-flash",
+    fallback: Optional[str] = None
+) -> Optional[str]:
     """
     Executes a Gemini API generation request using google-genai SDK.
-    Returns the response text, or None if the API call fails.
+    Returns the response text, or fallback/None if the API call fails.
     """
     api_key = get_gemini_api_key()
     if not api_key:
-        return None
+        return fallback
 
     try:
         from google import genai
@@ -48,18 +53,20 @@ def call_gemini(prompt: str, system_instruction: str = "", model: str = "gemini-
             contents=prompt,
             config=config
         )
-        return response.text
+        if response and response.text:
+            return response.text
     except Exception as e:
-        # Fallback to gemini-3.6-flash if needed
+        # Fallback retry with gemini-2.5-flash / gemini-2.5-pro
         try:
             from google import genai
-            from google.genai import types
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model="gemini-2.5-flash",
                 contents=prompt
             )
-            return response.text
+            if response and response.text:
+                return response.text
         except Exception:
             pass
-        return None
+
+    return fallback

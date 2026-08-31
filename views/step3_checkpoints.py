@@ -2,18 +2,23 @@ import streamlit as st
 from components.header import render_top_header
 from components.stepper import render_stepper
 from ai.doc_summary import summarize_checkpoint_document
+from db.repository import upload_file_to_supabase_storage
 
 @st.dialog("Edit Checkpoint", width="medium")
 def show_edit_checkpoint_modal(idx: int, cp: dict):
     st.markdown(f'<div style="font-size: 13.5px; color: #64748B; margin-bottom: 16px;">Edit checkpoint parameters for <b>{cp["name"]}</b>.</div>', unsafe_allow_html=True)
     
     available_steps = st.session_state.get("new_workflow_steps", ["Default Process Step"])
-    cur_proc = cp.get("process", available_steps[0])
+    cur_proc = cp.get("process", available_steps[0] if available_steps else "")
     cur_proc_idx = available_steps.index(cur_proc) if cur_proc in available_steps else 0
     
     new_name = st.text_input("Checkpoint Name *", value=cp["name"])
     new_proc = st.selectbox("Associated Process Step *", options=available_steps, index=cur_proc_idx)
-    new_summary = st.text_area("Quality Summary / Tolerance Spec", value=cp.get("summary", ""), height=90)
+    
+    st.markdown("<label class='form-label' style='font-size: 13px; margin-top: 8px;'>Replace / Upload SOP Document (.pdf, .xlsx, .docx)</label>", unsafe_allow_html=True)
+    edit_uploaded_file = st.file_uploader("Upload New Document", type=["pdf", "xlsx", "xls", "docx", "csv"], key=f"edit_cp_file_{idx}", label_visibility="collapsed")
+    
+    new_summary = st.text_area("Quality Summary / Tolerance Spec", value=cp.get("summary", ""), height=80)
     
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     col_save, col_cancel = st.columns([1, 1])
@@ -23,6 +28,15 @@ def show_edit_checkpoint_modal(idx: int, cp: dict):
                 st.session_state.new_workflow_checkpoints[idx]["name"] = new_name.strip()
                 st.session_state.new_workflow_checkpoints[idx]["process"] = new_proc
                 st.session_state.new_workflow_checkpoints[idx]["summary"] = new_summary.strip()
+                
+                if edit_uploaded_file is not None:
+                    try:
+                        upload_file_to_supabase_storage(edit_uploaded_file.name, edit_uploaded_file.getvalue())
+                    except Exception:
+                        pass
+                    st.session_state.new_workflow_checkpoints[idx]["doc"] = edit_uploaded_file.name
+                    st.session_state.new_workflow_checkpoints[idx]["upload_document_name"] = edit_uploaded_file.name
+                
                 st.toast(f"Updated checkpoint: {new_name.strip()}")
                 st.rerun()
             else:
@@ -34,7 +48,7 @@ def show_edit_checkpoint_modal(idx: int, cp: dict):
 def render_step3_view():
     """
     SCREEN 4 — STEP 3
-    Configure Checkpoints — Full CRUD, AI Document Understanding & Reordering
+    Configure Checkpoints — Clean state, User Document Upload ONLY & AI Document Understanding
     """
     render_top_header()
     render_stepper(3)
@@ -51,85 +65,87 @@ def render_step3_view():
         """, unsafe_allow_html=True)
 
     # 1. Fetch process steps options from Step 2
-    available_steps = st.session_state.get("new_workflow_steps", [
-        "Foundry / Casting & Fettling",
-        "CNC Rough & Finish Milling",
-        "Drilling, Tapping & Boring",
-        "Metrology & GNT Inspection",
-        "Cleaning, Assembly & Final QC Leak Test"
-    ])
+    available_steps = st.session_state.get("new_workflow_steps", [])
     process_options = ["Select Process Step"] + available_steps
 
-    # Initialize checkpoints in session state if not present
+    # Initialize checkpoints in session state cleanly to empty list if not present
     if "new_workflow_checkpoints" not in st.session_state or st.session_state.new_workflow_checkpoints is None:
-        st.session_state.new_workflow_checkpoints = [
-            {
-                "id": "cp_init_1",
-                "sequence": 1,
-                "name": "Casting Temperature & Pour Rate",
-                "process": available_steps[0] if available_steps else "Process Step 1",
-                "doc": "casting_sop_v2.pdf",
-                "status": "Configuration Complete",
-                "summary": "Melt temperature 1420±15°C with optical pyrometer verification."
-            },
-            {
-                "id": "cp_init_2",
-                "sequence": 2,
-                "name": "Milling Surface Flatness & Bore",
-                "process": available_steps[min(1, len(available_steps)-1)],
-                "doc": "milling_spec_guide.pdf",
-                "status": "Configuration Complete",
-                "summary": "Face flatness within 0.025 mm, surface roughness Ra ≤ 1.6 µm."
-            }
-        ]
+        st.session_state.new_workflow_checkpoints = []
 
-    # Form: Inputs at the top
-    col_name, col_proc, col_add = st.columns([5, 5, 2])
+    # Form: Inputs at the top (with real File Uploader!)
+    with st.container(border=True):
+        st.markdown('<div style="font-size: 14.5px; font-weight: 700; color: #0F172A; margin-bottom: 12px;">➕ Add Checkpoint</div>', unsafe_allow_html=True)
+        col_name, col_proc = st.columns(2)
 
-    with col_name:
-        st.markdown('<label class="form-label">Name <span class="required-star">*</span></label>', unsafe_allow_html=True)
-        cp_name = st.text_input(
-            label="Name",
-            value="",
-            placeholder="Enter checkpoint name...",
-            label_visibility="collapsed",
-            key="step3_name_input"
-        )
+        with col_name:
+            st.markdown('<label class="form-label">Checkpoint Name <span class="required-star">*</span></label>', unsafe_allow_html=True)
+            cp_name = st.text_input(
+                label="Name",
+                value="",
+                placeholder="e.g. Casting Temperature Check...",
+                label_visibility="collapsed",
+                key="step3_name_input"
+            )
 
-    with col_proc:
-        st.markdown('<label class="form-label">Process Step <span class="required-star">*</span></label>', unsafe_allow_html=True)
-        cp_proc = st.selectbox(
-            label="Process Step",
-            options=process_options,
-            index=0,
-            label_visibility="collapsed",
-            key="step3_process_select"
-        )
+        with col_proc:
+            st.markdown('<label class="form-label">Associated Process Step <span class="required-star">*</span></label>', unsafe_allow_html=True)
+            cp_proc = st.selectbox(
+                label="Process Step",
+                options=process_options,
+                index=0,
+                label_visibility="collapsed",
+                key="step3_process_select"
+            )
 
-    with col_add:
-        st.markdown('<div style="height: 24px;"></div>', unsafe_allow_html=True)
-        if st.button("➕ Add", use_container_width=True, key="step3_add_cp_btn"):
-            if cp_name.strip() and cp_proc != "Select Process Step":
-                # Generate AI Document & Quality Specification Summary
-                with st.spinner("Analyzing checkpoint quality requirements with Gemini AI..."):
-                    ai_summary = summarize_checkpoint_document(
-                        checkpoint_name=cp_name.strip(),
-                        process_name=cp_proc,
-                        document_name=f"spec_{cp_name.strip().lower().replace(' ', '_')}.pdf"
-                    )
+        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+        col_file, col_btn = st.columns([8.2, 2.8])
 
-                st.session_state.new_workflow_checkpoints.append({
-                    "id": f"new_cp_{len(st.session_state.new_workflow_checkpoints) + 1}",
-                    "name": cp_name.strip(),
-                    "process": cp_proc,
-                    "status": "Configuration Complete",
-                    "summary": ai_summary,
-                    "doc": f"spec_{cp_name.strip().lower().replace(' ', '_')}.pdf"
-                })
-                st.toast(f"Added checkpoint: {cp_name.strip()}")
-                st.rerun()
-            else:
-                st.warning("Please specify checkpoint name and select a process step.")
+        with col_file:
+            st.markdown('<label class="form-label">Upload SOP / Spec Document <i>(Optional — .pdf, .xlsx, .docx)</i></label>', unsafe_allow_html=True)
+            uploaded_doc = st.file_uploader(
+                label="Upload SOP Document",
+                type=["pdf", "xlsx", "xls", "docx", "csv"],
+                label_visibility="collapsed",
+                key="step3_doc_uploader"
+            )
+
+        with col_btn:
+            st.markdown('<div style="height: 24px;"></div>', unsafe_allow_html=True)
+            if st.button("➕ Add Checkpoint", type="primary", use_container_width=True, key="step3_add_cp_btn"):
+                if cp_name.strip() and cp_proc != "Select Process Step":
+                    doc_filename = uploaded_doc.name if uploaded_doc is not None else None
+                    
+                    # Upload to Supabase Storage if file provided
+                    if uploaded_doc is not None:
+                        try:
+                            upload_file_to_supabase_storage(uploaded_doc.name, uploaded_doc.getvalue())
+                        except Exception:
+                            pass
+
+                    # Generate AI Summary if document attached, or standard summary
+                    if doc_filename:
+                        with st.spinner("Analyzing uploaded SOP document with Gemini AI..."):
+                            ai_summary = summarize_checkpoint_document(
+                                checkpoint_name=cp_name.strip(),
+                                process_name=cp_proc,
+                                document_name=doc_filename
+                            )
+                    else:
+                        ai_summary = f"Quality verification check for {cp_name.strip()} during {cp_proc}."
+
+                    st.session_state.new_workflow_checkpoints.append({
+                        "id": f"new_cp_{len(st.session_state.new_workflow_checkpoints) + 1}",
+                        "name": cp_name.strip(),
+                        "process": cp_proc,
+                        "status": "Configuration Complete",
+                        "summary": ai_summary,
+                        "doc": doc_filename,
+                        "upload_document_name": doc_filename
+                    })
+                    st.toast(f"Added checkpoint: {cp_name.strip()}")
+                    st.rerun()
+                else:
+                    st.warning("Please specify checkpoint name and select an associated process step.")
 
     st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
@@ -153,13 +169,18 @@ def render_step3_view():
             for idx, item in enumerate(checkpoints):
                 status_class = "badge-success" if item.get("status") == "Configuration Complete" else "badge-error"
                 badge_html = f"<span class='badge-status {status_class}'><span style='font-size: 8px;'>●</span> {item.get('status', 'Complete')}</span>"
-                doc_name = item.get("doc", "spec_sheet.pdf")
+                doc_name = item.get("doc") or item.get("upload_document_name")
 
                 c1, c2, c3, c4, c5, c6, c7 = st.columns([0.8, 3.5, 3, 2, 1.8, 1.3, 1.3])
                 c1.markdown(f"<span style='font-weight: 600; color: #475569;'>{idx + 1}</span>", unsafe_allow_html=True)
                 c2.markdown(f"<span style='font-weight: 600; color: #0F172A;'>{item['name']}</span>", unsafe_allow_html=True)
                 c3.markdown(f"<span style='color: #475569;'>{item['process']}</span>", unsafe_allow_html=True)
-                c4.markdown(f"<div class='upload-control-pill'><span>📎</span><span>{doc_name}</span></div>", unsafe_allow_html=True)
+                
+                if doc_name:
+                    c4.markdown(f"<div class='upload-control-pill'><span>📎</span><span>{doc_name}</span></div>", unsafe_allow_html=True)
+                else:
+                    c4.markdown("<span style='color: #94A3B8; font-size: 12.5px;'>No document attached</span>", unsafe_allow_html=True)
+
                 c5.markdown(badge_html, unsafe_allow_html=True)
                 
                 with c6:

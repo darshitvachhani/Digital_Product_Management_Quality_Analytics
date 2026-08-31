@@ -46,9 +46,9 @@ page = st.session_state.current_page
 
 if page == "Dashboard":
     render_dashboard_view()
-elif page == "Product":
+elif page in ("Products", "Product"):
     render_product_view()
-elif page == "Process":
+elif page in ("Processes", "Process"):
     if st.session_state.get("process_view_mode", "list") == "list":
         render_process_list_view()
     else:
@@ -65,5 +65,5 @@ elif page == "Data Entry":
     render_data_entry_view()
 elif page == "Data Warehouse":
     render_data_warehouse_view()
-elif page == "User Manager":
+elif page in ("User Management", "User Manager"):
     render_user_manager_view()

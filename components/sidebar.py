@@ -4,11 +4,11 @@ def render_sidebar():
     """
     Renders the consistent deep-blue sidebar with the 6 navigation items:
     - Dashboard
-    - Product
-    - Process
+    - Products
+    - Processes
     - Data Entry
     - Data Warehouse
-    - User Manager
+    - User Management
     """
     with st.sidebar:
         # Direct sidebar CSS injection for tight vertical spacing & left alignment
@@ -112,15 +112,22 @@ def render_sidebar():
         """, unsafe_allow_html=True)
 
         current_page = st.session_state.get("current_page", "Dashboard")
+        # Normalize legacy names if present in state
+        if current_page == "Product":
+            current_page = "Products"
+        elif current_page == "Process":
+            current_page = "Processes"
+        elif current_page == "User Manager":
+            current_page = "User Management"
 
-        # Navigation Items
+        # Navigation Items (Renamed per user request)
         nav_items = [
             ("Dashboard", "📊", "Dashboard"),
-            ("Product", "📦", "Product"),
-            ("Process", "⚙️", "Process"),
+            ("Products", "📦", "Products"),
+            ("Processes", "⚙️", "Processes"),
             ("Data Entry", "📥", "Data Entry"),
             ("Data Warehouse", "🗄️", "Data Warehouse"),
-            ("User Manager", "👥", "User Manager")
+            ("User Management", "👥", "User Management")
         ]
 
         for page_name, icon, label in nav_items:
@@ -134,7 +141,7 @@ def render_sidebar():
                 use_container_width=True
             ):
                 st.session_state.current_page = page_name
-                if page_name == "Process":
+                if page_name == "Processes":
                     st.session_state.process_view_mode = "list"
                     st.session_state.process_step = 1
                 st.rerun()

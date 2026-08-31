@@ -62,20 +62,23 @@ def show_edit_user_modal(user: dict):
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     col_save, col_cancel = st.columns([1, 1])
     with col_save:
-        if st.button("Update Member", type="primary", use_container_width=True):
+        if st.button("Save Changes", type="primary", use_container_width=True):
             if name.strip() and email.strip():
-                update_user(user["id"], name, email, role, status)
-                st.toast(f"Updated user '{name}'!")
-                st.rerun()
+                try:
+                    update_user(user["id"], name, email, role, status)
+                    st.toast(f"Updated user '{name}'!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error updating user: {e}")
             else:
-                st.warning("Please provide a valid name and email.")
+                st.warning("Please provide a name and email.")
     with col_cancel:
         if st.button("Cancel", use_container_width=True):
             st.rerun()
 
-@st.dialog("Delete Team Member", width="small")
+@st.dialog("Delete User", width="small")
 def show_delete_user_modal(user: dict):
-    can_del, dataset_count, msg = can_delete_user(user["id"])
+    can_del, count, msg = can_delete_user(user["id"])
     
     if not can_del:
         st.markdown(f"""
@@ -93,7 +96,7 @@ def show_delete_user_modal(user: dict):
         st.markdown(f"""
         <div style="text-align: center; padding: 6px 0 16px 0;">
             <div style="font-size: 34px; margin-bottom: 10px;">⚠️</div>
-            <div style="font-size: 16px; font-weight: 700; color: #0F172A; margin-bottom: 8px;">Revoke Member Access?</div>
+            <div style="font-size: 16px; font-weight: 700; color: #0F172A; margin-bottom: 8px;">Delete Team Member?</div>
             <div style="font-size: 13.5px; color: #64748B; line-height: 1.5;">
                 Are you sure you want to remove <b>{user['name']}</b> ({user['email']})?
             </div>
@@ -105,7 +108,7 @@ def show_delete_user_modal(user: dict):
             if st.button("Yes, Delete", type="primary", use_container_width=True):
                 success, del_msg = delete_user(user["id"])
                 if success:
-                    st.toast(f"Removed user '{user['name']}'")
+                    st.toast(f"Deleted user '{user['name']}'")
                 else:
                     st.error(del_msg)
                 st.rerun()
@@ -115,9 +118,9 @@ def show_delete_user_modal(user: dict):
 
 def render_user_manager_view():
     """
-    User Manager View — Full CRUD with Data Contribution Deletion Guard
+    User Management View — Full CRUD with Strict Deletion Guard
     """
-    render_top_header("User & Access Management")
+    render_top_header("User Management")
 
     users = get_all_users()
 
@@ -125,7 +128,7 @@ def render_user_manager_view():
     with st.container():
         col_title, col_add = st.columns([8, 2])
         with col_title:
-            st.markdown(f'<div style="font-size: 15px; font-weight: 600; color: #1E293B; margin-top: 6px;">Platform Users & Roles ({len(users)})</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size: 15px; font-weight: 600; color: #1E293B; margin-top: 6px;">Active Platform Users ({len(users)})</div>', unsafe_allow_html=True)
         with col_add:
             if st.button("➕  Invite Member", type="primary", use_container_width=True, key="btn_open_new_user_modal"):
                 show_create_user_modal()
@@ -134,28 +137,28 @@ def render_user_manager_view():
 
     # Render Table with Interactive Action Buttons
     with st.container(border=True):
-        h1, h2, h3, h4, h5 = st.columns([3, 3, 2.5, 1.8, 1.4])
-        h1.markdown("**User Name**")
-        h2.markdown("**Email**")
-        h3.markdown("**Role**")
-        h4.markdown("**Status**")
+        h1, h2, h3, h4, h5 = st.columns([1, 3.5, 3.5, 2.5, 1.5])
+        h1.markdown("**S.No.**")
+        h2.markdown("**Name**")
+        h3.markdown("**Email**")
+        h4.markdown("**Role**")
         h5.markdown("<div style='text-align: center;'><b>Actions</b></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
-        for u in users:
-            c1, c2, c3, c4, c5 = st.columns([3, 3, 2.5, 1.8, 1.4])
-            c1.markdown(f"<span style='font-weight: 600; color: #0F172A;'>{u['name']}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<span style='color: #64748B;'>{u['email']}</span>", unsafe_allow_html=True)
-            c3.markdown(f"<span style='color: #334155;'>{u['role']}</span>", unsafe_allow_html=True)
-            c4.markdown(f"<span class='badge-status badge-success'><span style='font-size: 8px;'>●</span> {u['status']}</span>", unsafe_allow_html=True)
+        for idx, u in enumerate(users, start=1):
+            c1, c2, c3, c4, c5 = st.columns([1, 3.5, 3.5, 2.5, 1.5])
+            c1.markdown(f"<span style='font-weight: 600; color: #475569;'>{idx}</span>", unsafe_allow_html=True)
+            c2.markdown(f"<span style='font-weight: 600; color: #0F172A;'>{u['name']}</span>", unsafe_allow_html=True)
+            c3.markdown(f"<span style='color: #475569;'>{u['email']}</span>", unsafe_allow_html=True)
+            c4.markdown(f"<span style='background: #EFF6FF; color: #2563EB; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px;'>{u['role']}</span>", unsafe_allow_html=True)
             
             with c5:
-                col_e, col_d = st.columns(2)
-                with col_e:
-                    if st.button("✏️", key=f"edit_u_{u['id']}", help="Edit Member"):
+                col_edit, col_del = st.columns(2)
+                with col_edit:
+                    if st.button("✏️", key=f"edit_u_{u['id']}", help="Edit User"):
                         show_edit_user_modal(u)
-                with col_d:
-                    if st.button("🗑️", key=f"del_u_{u['id']}", help="Delete Member"):
+                with col_del:
+                    if st.button("🗑️", key=f"del_u_{u['id']}", help="Delete User"):
                         show_delete_user_modal(u)
             
             st.markdown("<hr style='margin: 6px 0; border: none; border-top: 1px solid #F1F5F9;'>", unsafe_allow_html=True)

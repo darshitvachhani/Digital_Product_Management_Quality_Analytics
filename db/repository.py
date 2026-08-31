@@ -197,6 +197,28 @@ def get_all_processes(filter_product_name: Optional[str] = None) -> List[Dict[st
             cursor.execute(query)
         return [dict(row) for row in cursor.fetchall()]
 
+def get_processes_by_product(product_name: str) -> List[Dict[str, Any]]:
+    """Returns processes belonging specifically to a given product name."""
+    if not product_name or product_name == "All Products":
+        return get_all_processes()
+    sb = get_supabase_client()
+    if sb:
+        try:
+            res = sb.table("processes").select("id, name, sequence, status, products!inner(name)").eq("products.name", product_name).order("sequence").execute()
+            return [{"id": r["id"], "process_name": r["name"], "sequence": r["sequence"], "status": r["status"]} for r in res.data]
+        except Exception as e:
+            print(f"Supabase get_processes_by_product fallback: {e}")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT proc.id, proc.name AS process_name, proc.sequence, proc.status
+            FROM processes proc
+            JOIN products prd ON proc.product_id = prd.id
+            WHERE prd.name = ?
+            ORDER BY proc.sequence ASC
+        """, (product_name,))
+        return [dict(r) for r in cursor.fetchall()]
+
 def get_process_full_details(process_id: int) -> Optional[Dict[str, Any]]:
     """Fetches full relational details for a process."""
     sb = get_supabase_client()
@@ -442,6 +464,28 @@ def get_all_checkpoints_list() -> List[Dict[str, Any]]:
         cursor.execute(query)
         return [dict(row) for row in cursor.fetchall()]
 
+def get_checkpoints_by_process(process_name: str) -> List[Dict[str, Any]]:
+    """Returns checkpoints belonging specifically to a given process name."""
+    if not process_name or process_name == "All Processes":
+        return get_all_checkpoints_list()
+    sb = get_supabase_client()
+    if sb:
+        try:
+            res = sb.table("checkpoints").select("id, name, sequence, status, summary, processes!inner(name)").eq("processes.name", process_name).order("sequence").execute()
+            return [{"id": r["id"], "checkpoint_name": r["name"], "sequence": r["sequence"], "status": r.get("status", "Active"), "summary": r.get("summary", "")} for r in res.data]
+        except Exception as e:
+            print(f"Supabase get_checkpoints_by_process fallback: {e}")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.id, c.name AS checkpoint_name, c.sequence, c.status, c.summary
+            FROM checkpoints c
+            JOIN processes proc ON c.process_id = proc.id
+            WHERE proc.name = ?
+            ORDER BY c.sequence ASC
+        """, (process_name,))
+        return [dict(r) for r in cursor.fetchall()]
+
 # ============================================================================
 # 4. QUALITY DATASETS CRUD (DATA ENTRY & DATA WAREHOUSE & SUPABASE STORAGE)
 # ============================================================================
@@ -539,9 +583,11 @@ def get_all_datasets(
     product_filter: Optional[str] = None,
     process_filter: Optional[str] = None,
     checkpoint_filter: Optional[str] = None,
-    user_filter: Optional[str] = None
+    user_filter: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None
 ) -> List[Dict[str, Any]]:
-    """Retrieves all quality datasets with filtering."""
+    """Retrieves all quality datasets with optional product, process, checkpoint, user, and date-range filtering."""
     sb = get_supabase_client()
     if sb:
         try:
@@ -564,6 +610,17 @@ def get_all_datasets(
                     continue
                 if user_filter and user_filter != "All Users" and user_filter.lower() not in d.get("uploaded_by_name", "").lower():
                     continue
+
+                # Date range filter check (YYYY-MM-DD string or datetime/date)
+                created_raw = str(d.get("created_at") or "")[:10]
+                if start_date and created_raw:
+                    start_str = str(start_date)[:10]
+                    if created_raw < start_str:
+                        continue
+                if end_date and created_raw:
+                    end_str = str(end_date)[:10]
+                    if created_raw > end_str:
+                        continue
 
                 results.append({
                     "id": d["id"],
@@ -604,9 +661,32 @@ def get_all_datasets(
         if user_filter and user_filter != "All Users":
             query += " AND d.uploaded_by_name LIKE ?"
             params.append(f"%{user_filter}%")
+        if start_date:
+            query += " AND DATE(d.created_at) >= DATE(?)"
+            params.append(str(start_date)[:10])
+        if end_date:
+            query += " AND DATE(d.created_at) <= DATE(?)"
+            params.append(str(end_date)[:10])
+
         query += " ORDER BY d.id DESC"
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+
+def get_datasets_by_criteria(
+    product: Optional[str] = None,
+    process: Optional[str] = None,
+    checkpoint: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None
+) -> List[Dict[str, Any]]:
+    """Helper to query datasets matching multi-criteria filter selections."""
+    return get_all_datasets(
+        product_filter=product,
+        process_filter=process,
+        checkpoint_filter=checkpoint,
+        start_date=start_date,
+        end_date=end_date
+    )
 
 # ============================================================================
 # 5. USERS CRUD & VALIDATION GUARDS

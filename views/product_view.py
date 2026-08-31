@@ -28,7 +28,7 @@ def show_create_product_modal():
             if code.strip() and name.strip() and line.strip():
                 try:
                     insert_product(code, name, line, status)
-                    st.toast(f"Product '{name}' created successfully!")
+                    st.toast(f"Created product '{name}'!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error creating product: {e}")
@@ -40,7 +40,7 @@ def show_create_product_modal():
 
 @st.dialog("Edit Product", width="medium")
 def show_edit_product_modal(product: dict):
-    st.markdown(f'<div style="font-size: 13.5px; color: #64748B; margin-bottom: 16px;">Update specifications for <b>{product["name"]}</b>.</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size: 13.5px; color: #64748B; margin-bottom: 16px;">Update product details for <b>{product["name"]}</b>.</div>', unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
@@ -49,17 +49,22 @@ def show_edit_product_modal(product: dict):
         name = st.text_input("Product Name *", value=product["name"])
     
     line = st.text_input("Manufacturing Line *", value=product["manufacturing_line"])
-    status_idx = ["Active", "Inactive", "Archived"].index(product["status"]) if product["status"] in ["Active", "Inactive", "Archived"] else 0
-    status = st.selectbox("Status", ["Active", "Inactive", "Archived"], index=status_idx)
+    
+    status_options = ["Active", "Inactive", "Archived"]
+    cur_status_idx = status_options.index(product["status"]) if product["status"] in status_options else 0
+    status = st.selectbox("Status", options=status_options, index=cur_status_idx)
 
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     col_save, col_cancel = st.columns([1, 1])
     with col_save:
-        if st.button("Update Product", type="primary", use_container_width=True):
+        if st.button("Save Changes", type="primary", use_container_width=True):
             if code.strip() and name.strip() and line.strip():
-                update_product(product["id"], code, name, line, status)
-                st.toast(f"Updated product '{name}'!")
-                st.rerun()
+                try:
+                    update_product(product["id"], code, name, line, status)
+                    st.toast(f"Updated product '{name}'!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error updating product: {e}")
             else:
                 st.warning("Please fill in all required fields.")
     with col_cancel:
@@ -68,7 +73,7 @@ def show_edit_product_modal(product: dict):
 
 @st.dialog("Delete Product", width="small")
 def show_delete_product_modal(product: dict):
-    can_del, proc_count, msg = can_delete_product(product["id"])
+    can_del, count, msg = can_delete_product(product["id"])
     
     if not can_del:
         st.markdown(f"""
@@ -108,9 +113,9 @@ def show_delete_product_modal(product: dict):
 
 def render_product_view():
     """
-    Product Management View — Full CRUD with Strict Deletion Guard
+    Products View — Full CRUD with Strict Deletion Guard
     """
-    render_top_header("Product Catalog & Line Management")
+    render_top_header("Products")
 
     products = get_all_products()
 
@@ -131,24 +136,32 @@ def render_product_view():
         h1.markdown("**Code**")
         h2.markdown("**Product Name**")
         h3.markdown("**Manufacturing Line**")
-        h4.markdown("**Active Processes**")
+        h4.markdown("**Status**")
         h5.markdown("<div style='text-align: center;'><b>Actions</b></div>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 8px 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
-        for p in products:
+        for prod in products:
+            status = prod["status"]
+            if status == "Active":
+                badge_html = f"<span class='badge-status badge-success'><span style='font-size: 8px;'>●</span> {status}</span>"
+            elif status == "Inactive":
+                badge_html = f"<span class='badge-status badge-warning'><span style='font-size: 8px;'>●</span> {status}</span>"
+            else:
+                badge_html = f"<span class='badge-status badge-inactive'><span style='font-size: 8px;'>●</span> {status}</span>"
+
             c1, c2, c3, c4, c5 = st.columns([1.5, 4, 3, 2, 1.5])
-            c1.markdown(f"<span style='font-weight: 600; color: #2563EB;'>{p['product_code']}</span>", unsafe_allow_html=True)
-            c2.markdown(f"<span style='font-weight: 600; color: #0F172A;'>{p['name']}</span>", unsafe_allow_html=True)
-            c3.markdown(f"<span style='color: #475569;'>{p['manufacturing_line']}</span>", unsafe_allow_html=True)
-            c4.markdown(f"<span style='color: #334155;'>{p['process_count']} Processes</span>", unsafe_allow_html=True)
+            c1.markdown(f"<span style='font-weight: 700; color: #2563EB;'>{prod['product_code']}</span>", unsafe_allow_html=True)
+            c2.markdown(f"<span style='font-weight: 600; color: #0F172A;'>{prod['name']}</span>", unsafe_allow_html=True)
+            c3.markdown(f"<span style='color: #475569;'>{prod['manufacturing_line']}</span>", unsafe_allow_html=True)
+            c4.markdown(badge_html, unsafe_allow_html=True)
             
             with c5:
-                col_e, col_d = st.columns(2)
-                with col_e:
-                    if st.button("✏️", key=f"edit_prod_{p['id']}", help="Edit Product"):
-                        show_edit_product_modal(p)
-                with col_d:
-                    if st.button("🗑️", key=f"del_prod_{p['id']}", help="Delete Product"):
-                        show_delete_product_modal(p)
+                col_edit, col_del = st.columns(2)
+                with col_edit:
+                    if st.button("✏️", key=f"edit_prod_{prod['id']}", help="Edit Product"):
+                        show_edit_product_modal(prod)
+                with col_del:
+                    if st.button("🗑️", key=f"del_prod_{prod['id']}", help="Delete Product"):
+                        show_delete_product_modal(prod)
             
             st.markdown("<hr style='margin: 6px 0; border: none; border-top: 1px solid #F1F5F9;'>", unsafe_allow_html=True)

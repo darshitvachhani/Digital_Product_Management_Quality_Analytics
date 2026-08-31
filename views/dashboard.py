@@ -1,10 +1,19 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from components.header import render_top_header
-from ai.dashboard_generator import generate_quality_analytics_dashboard, generate_saved_version_dashboard
+from ai.dashboard_generator import (
+    generate_quality_analytics_dashboard,
+    generate_saved_version_dashboard,
+    PROMPT_PRESETS
+)
 from ai.chart_insights import generate_chart_action_insight
 from utils.pdf_generator import generate_quality_report_pdf
 from db.repository import (
+    get_all_products,
+    get_processes_by_product,
+    get_checkpoints_by_process,
+    get_all_datasets,
+    get_datasets_by_criteria,
     get_all_dashboard_versions,
     get_dashboard_version_by_id,
     save_dashboard_version,
@@ -69,77 +78,295 @@ def show_manage_versions_modal():
 
 def render_dashboard_view():
     """
-    QUALITY ANALYTICS DASHBOARD WITH PERSISTENT VERSIONING & PDF EXPORT
+    QUALITY ANALYTICS DASHBOARD
+    - Dual-Mode Data Source Selection (Single Excel OR Cascading Filter + Date Range)
+    - Prompt Preset Library with specialized chart definitions
+    - AI-Powered Quality Intelligence & Executive PDF Export
     """
     render_top_header("Quality Analytics Dashboard")
 
-    st.markdown("""<div style="font-size: 14.5px; color: #64748B; margin-top: -12px; margin-bottom: 20px;">
+    st.markdown("""<div style="font-size: 14.5px; color: #64748B; margin-top: -12px; margin-bottom: 18px;">
 AI-enhanced manufacturing quality analytics, root cause investigation, dynamic dashboard generation, and executive PDF reporting.
 </div>""", unsafe_allow_html=True)
 
     default_prompt = "Generate a quality analytics dashboard suitable to the uploaded data"
 
-    # --- 1. Version Preset Selector Bar ---
-    saved_versions = get_all_dashboard_versions()
-    version_options = ["-- Custom Prompt / Select a Saved Version --"] + [
-        f"v{v['id']}: {v['name']} ({format_date_str(v.get('created_at'))})" for v in saved_versions
-    ]
-
-    has_dashboard = "cached_dashboard_data" in st.session_state and st.session_state.cached_dashboard_data is not None
-
+    # =========================================================================
+    # SECTION 1: DUAL-MODE DATA SOURCE SELECTION (OR LOGIC)
+    # =========================================================================
     with st.container(border=True):
-        col_ver_sel, col_ver_btn = st.columns([8.2, 2.8])
-        
-        with col_ver_sel:
-            st.markdown('<label class="form-label" style="font-size: 13px; margin-bottom: 4px; font-weight: 600;">📂 Load Saved Dashboard Version</label>', unsafe_allow_html=True)
-            selected_ver_str = st.selectbox(
-                label="Saved Dashboard Versions",
-                options=version_options,
-                index=0,
-                label_visibility="collapsed",
-                key="dashboard_version_select"
+        st.markdown("""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div style="font-size: 15px; font-weight: 700; color: #0F172A;">📊 Step 1: Select Inspection Data Source</div>
+            <span style="font-size: 12px; background: #F1F5F9; color: #475569; padding: 2px 8px; border-radius: 4px; font-weight: 600;">Choose Option A OR Option B</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        data_mode = st.radio(
+            label="Data Source Mode",
+            options=["📄 Option A: Choose Specific Excel Dataset", "🔍 Option B: Multi-Criteria Filter & Date Range Aggregation"],
+            index=0,
+            horizontal=True,
+            key="dash_data_mode_select"
+        )
+
+        st.markdown("<hr style='margin: 10px 0 14px 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+        # All available datasets for Single Mode
+        all_datasets = get_all_datasets()
+        selected_matched_datasets = []
+        filter_context = {}
+
+        if "Option A" in data_mode:
+            # OPTION A: Single Excel Sheet Selection
+            if not all_datasets:
+                st.warning("No datasets found in Data Warehouse. Please upload an inspection file in Data Entry.")
+                ds_options = ["No datasets available"]
+            else:
+                ds_options = [
+                    f"{d['file_name']} ({d['product_name']} • {d['checkpoint_name']} • {format_date_str(d['created_at'])})"
+                    for d in all_datasets
+                ]
+
+            col_single_ds, col_single_info = st.columns([7, 3])
+            with col_single_ds:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Select Excel Dataset to Analyze</label>', unsafe_allow_html=True)
+                chosen_ds_str = st.selectbox(
+                    label="Select Excel Dataset",
+                    options=ds_options,
+                    index=0,
+                    label_visibility="collapsed",
+                    key="dash_single_excel_select"
+                )
+
+            # Match dataset object
+            if all_datasets and chosen_ds_str != "No datasets available":
+                chosen_idx = ds_options.index(chosen_ds_str)
+                target_ds = all_datasets[chosen_idx]
+                selected_matched_datasets = [target_ds]
+                filter_context = {
+                    "mode": "single_excel",
+                    "file_name": target_ds["file_name"],
+                    "product": target_ds["product_name"],
+                    "process": target_ds["process_name"],
+                    "checkpoint": target_ds["checkpoint_name"],
+                    "date_range_str": format_date_str(target_ds["created_at"])
+                }
+                with col_single_info:
+                    st.markdown(f"""
+                    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #334155; margin-top: 20px;">
+                        <b>Uploader:</b> {target_ds['uploaded_by_name']}<br>
+                        <b>Status:</b> <span style="color: #16A34A; font-weight: 600;">● {target_ds['status']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+        else:
+            # OPTION B: Cascading Multi-Criteria + Date Range Aggregation
+            col_p, col_pr, col_cp = st.columns(3)
+
+            # 1. Product Filter
+            products = get_all_products()
+            prod_options = ["All Products"] + [p["name"] for p in products]
+            with col_p:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Product</label>', unsafe_allow_html=True)
+                sel_product = st.selectbox("Product", options=prod_options, index=0, label_visibility="collapsed", key="dash_filter_product")
+
+            # 2. Cascading Process Filter
+            if sel_product == "All Products":
+                proc_records = get_processes_by_product("All Products")
+            else:
+                proc_records = get_processes_by_product(sel_product)
+            proc_options = ["All Processes"] + [pr["process_name"] for pr in proc_records]
+            with col_pr:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Process (Cascaded)</label>', unsafe_allow_html=True)
+                sel_process = st.selectbox("Process", options=proc_options, index=0, label_visibility="collapsed", key="dash_filter_process")
+
+            # 3. Cascading Checkpoint Filter
+            if sel_process == "All Processes":
+                cp_records = get_checkpoints_by_process("All Processes")
+            else:
+                cp_records = get_checkpoints_by_process(sel_process)
+            cp_options = ["All Checkpoints"] + [c["checkpoint_name"] for c in cp_records]
+            with col_cp:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Checkpoint (Cascaded)</label>', unsafe_allow_html=True)
+                sel_checkpoint = st.selectbox("Checkpoint", options=cp_options, index=0, label_visibility="collapsed", key="dash_filter_checkpoint")
+
+            st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+
+            # 4. Date Range Filter
+            col_start, col_end, col_badge = st.columns([3, 3, 4])
+            default_start = date(2026, 8, 1)
+            default_end = date(2026, 8, 31)
+
+            with col_start:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Start Date (Upload / Record)</label>', unsafe_allow_html=True)
+                start_d = st.date_input("Start Date", value=default_start, label_visibility="collapsed", key="dash_start_date")
+
+            with col_end:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">End Date</label>', unsafe_allow_html=True)
+                end_d = st.date_input("End Date", value=default_end, label_visibility="collapsed", key="dash_end_date")
+
+            # Fetch matching datasets
+            selected_matched_datasets = get_datasets_by_criteria(
+                product=sel_product,
+                process=sel_process,
+                checkpoint=sel_checkpoint,
+                start_date=start_d,
+                end_date=end_d
             )
 
-        with col_ver_btn:
-            st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
-            if st.button("⚙️  Manage Versions", use_container_width=True, key="btn_manage_versions"):
-                show_manage_versions_modal()
+            filter_context = {
+                "mode": "multi_filter",
+                "product": sel_product,
+                "process": sel_process,
+                "checkpoint": sel_checkpoint,
+                "start_date": str(start_d),
+                "end_date": str(end_d),
+                "date_range_str": f"{start_d} to {end_d}",
+                "dataset_count": len(selected_matched_datasets)
+            }
 
-        # Handle version selection
-        if selected_ver_str != "-- Custom Prompt / Select a Saved Version --":
-            ver_id = int(selected_ver_str.split(":")[0].replace("v", ""))
-            ver_record = get_dashboard_version_by_id(ver_id)
-            if ver_record:
-                if st.session_state.get("last_loaded_version_id") != ver_id:
-                    st.session_state.cached_dashboard_data = generate_saved_version_dashboard(ver_record)
-                    st.session_state.active_prompt = ver_record["prompt"]
-                    st.session_state.last_loaded_version_id = ver_id
+            with col_badge:
+                match_count = len(selected_matched_datasets)
+                st.markdown('<div style="height: 20px;"></div>', unsafe_allow_html=True)
+                if match_count > 0:
+                    st.markdown(f"""
+                    <div style="background: #EFF6FF; border: 1px solid #BFDBFE; color: #1E40AF; padding: 8px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600; text-align: center;">
+                        🎯 Matched <b>{match_count}</b> dataset(s) for aggregate synthesis
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div style="background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; padding: 8px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600; text-align: center;">
+                        ⚠️ 0 datasets matched current filter criteria
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+    # =========================================================================
+    # SECTION 2: 3-WAY ANALYSIS QUERY SELECTION (OR LOGIC)
+    # =========================================================================
+    with st.container(border=True):
+        st.markdown("""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div style="font-size: 15px; font-weight: 700; color: #0F172A;">✨ Step 2: Choose Analysis Definition (OR Selection)</div>
+            <span style="font-size: 12px; background: #F1F5F9; color: #475569; padding: 2px 8px; border-radius: 4px; font-weight: 600;">Choose 1 of 3 Modes</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        query_mode = st.radio(
+            label="Analysis Query Mode",
+            options=[
+                "⭐ Standard Analysis Preset",
+                "✍️ Custom Analytics Prompt",
+                "📂 Saved Dashboard Version"
+            ],
+            index=0,
+            horizontal=True,
+            key="dash_query_mode_select"
+        )
+
+        st.markdown("<hr style='margin: 10px 0 14px 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
+
+        if "Standard Analysis Preset" in query_mode:
+            # MODE 1: Standard Analysis Preset
+            col_preset_sel, col_preset_btn = st.columns([7.8, 2.2])
+            preset_labels = [p["title"] for p in PROMPT_PRESETS]
+            with col_preset_sel:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Choose Standard Analysis Preset</label>', unsafe_allow_html=True)
+                sel_preset_title = st.selectbox(
+                    label="Standard Analysis Preset",
+                    options=preset_labels,
+                    index=0,
+                    label_visibility="collapsed",
+                    key="dash_preset_select_radio"
+                )
+            
+            # Find chosen preset
+            chosen_preset = next((p for p in PROMPT_PRESETS if p["title"] == sel_preset_title), PROMPT_PRESETS[0])
+            st.markdown(f"""
+            <div style="background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 14px; border-radius: 6px; font-size: 12.5px; color: #475569; margin: 6px 0 10px 0;">
+                <b>Description:</b> {chosen_preset['description']}<br>
+                <b>Embedded Prompt:</b> <span style="font-style: italic; color: #1E293B;">"{chosen_preset['prompt']}"</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+            with col_preset_btn:
+                st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
+                if st.button("✨ Generate Dashboard", type="primary", use_container_width=True, key="btn_gen_preset"):
+                    with st.spinner(f"Synthesizing {chosen_preset['title']} with Gemini AI..."):
+                        dashboard_data = generate_quality_analytics_dashboard(
+                            user_prompt=chosen_preset["prompt"],
+                            selected_datasets=selected_matched_datasets,
+                            filter_context=filter_context
+                        )
+                        st.session_state.cached_dashboard_data = dashboard_data
+                        st.session_state.active_prompt = chosen_preset["prompt"]
+                        st.session_state.last_loaded_version_id = None
                     st.rerun()
 
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        elif "Custom Analytics Prompt" in query_mode:
+            # MODE 2: Custom Analytics Prompt
+            col_custom_input, col_custom_btn = st.columns([7.8, 2.2])
+            with col_custom_input:
+                st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Type Natural Language Analytics Query</label>', unsafe_allow_html=True)
+                custom_prompt = st.text_input(
+                    label="Custom Analytics Prompt",
+                    value=st.session_state.get("active_prompt", default_prompt),
+                    placeholder="e.g. Compare night shift defect variance and machine spindle drift...",
+                    label_visibility="collapsed",
+                    key="dash_custom_prompt_input"
+                )
 
-        # --- 2. Prompt Input & Action Buttons ---
-        col_prompt, col_gen = st.columns([8.2, 2.8])
+            with col_custom_btn:
+                st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
+                if st.button("✨ Generate Dashboard", type="primary", use_container_width=True, key="btn_gen_custom"):
+                    if custom_prompt.strip():
+                        with st.spinner("Analyzing quality datasets and generating intelligence dashboard with Gemini AI..."):
+                            dashboard_data = generate_quality_analytics_dashboard(
+                                user_prompt=custom_prompt.strip(),
+                                selected_datasets=selected_matched_datasets,
+                                filter_context=filter_context
+                            )
+                            st.session_state.cached_dashboard_data = dashboard_data
+                            st.session_state.active_prompt = custom_prompt.strip()
+                            st.session_state.last_loaded_version_id = None
+                        st.rerun()
+                    else:
+                        st.warning("Please type a custom prompt.")
 
-        with col_prompt:
-            st.markdown('<label class="form-label" style="font-size: 13px; margin-bottom: 4px; font-weight: 600;">✨ Natural Language Query / Analytics Prompt</label>', unsafe_allow_html=True)
-            user_prompt = st.text_input(
-                label="Dashboard Prompt",
-                value=st.session_state.get("active_prompt", default_prompt),
-                placeholder="Describe the quality analytics, defect metrics, or machine comparisons you want...",
-                label_visibility="collapsed",
-                key="dashboard_prompt_input"
-            )
+        else:
+            # MODE 3: Saved Dashboard Version
+            saved_versions = get_all_dashboard_versions()
+            if not saved_versions:
+                st.info("No saved dashboard versions found. Save your current analysis as a version using the '💾 Save as Version' button below.")
+            else:
+                ver_options = [
+                    f"v{v['id']}: {v['name']} ({format_date_str(v.get('created_at'))}) — By {v.get('created_by', 'Admin')}"
+                    for v in saved_versions
+                ]
+                col_ver_sel, col_ver_btn = st.columns([7.8, 2.2])
+                with col_ver_sel:
+                    st.markdown('<label class="form-label" style="font-size: 13px; font-weight: 600;">Select Saved Dashboard Version</label>', unsafe_allow_html=True)
+                    sel_ver_str = st.selectbox(
+                        label="Saved Version",
+                        options=ver_options,
+                        index=0,
+                        label_visibility="collapsed",
+                        key="dash_saved_version_radio"
+                    )
 
-        with col_gen:
-            st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
-            if st.button("✨  Generate Dashboard", type="primary", use_container_width=True, key="btn_generate_dashboard"):
-                with st.spinner("Analyzing quality datasets and generating intelligence dashboard with Gemini AI..."):
-                    dashboard_data = generate_quality_analytics_dashboard(user_prompt)
-                    st.session_state.cached_dashboard_data = dashboard_data
-                    st.session_state.active_prompt = user_prompt
-                    st.session_state.last_loaded_version_id = None
-                st.rerun()
+                with col_ver_btn:
+                    st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
+                    if st.button("📂 Load Version", type="primary", use_container_width=True, key="btn_load_saved_ver"):
+                        ver_id = int(sel_ver_str.split(":")[0].replace("v", ""))
+                        ver_record = get_dashboard_version_by_id(ver_id)
+                        if ver_record:
+                            st.session_state.cached_dashboard_data = generate_saved_version_dashboard(ver_record)
+                            st.session_state.active_prompt = ver_record["prompt"]
+                            st.session_state.last_loaded_version_id = ver_id
+                            st.rerun()
 
     st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
@@ -148,25 +375,33 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
         st.markdown("""
         <div class="qualiq-card" style="padding: 36px 24px; text-align: center; background: #F8FAFC; border: 2px dashed #CBD5E1; border-radius: 12px; margin-top: 10px;">
             <div style="font-size: 38px; margin-bottom: 10px;">📊</div>
-            <div style="font-size: 18px; font-weight: 700; color: #0F172A; margin-bottom: 6px;">Ready to Generate or Load Quality Analytics Dashboard</div>
-            <div style="font-size: 14px; color: #64748B; max-width: 580px; margin: 0 auto 18px auto; line-height: 1.5;">
-                Select a <b>Saved Version</b> from the dropdown above to load an instant snapshot, or click <b>✨ Generate Dashboard</b> to synthesize custom analytics across 18 production datasets using Gemini AI. Once generated, you can export the official <b>Executive PDF Report</b>.
+            <div style="font-size: 18px; font-weight: 700; color: #0F172A; margin-bottom: 6px;">Ready to Generate Quality Analytics Dashboard</div>
+            <div style="font-size: 14px; color: #64748B; max-width: 620px; margin: 0 auto 18px auto; line-height: 1.5;">
+                Select your <b>Data Source</b> (Single Excel or Multi-Criteria Filter), pick an <b>Analysis Preset</b>, and click <b>✨ Generate Dashboard</b> to synthesize custom quality intelligence across your inspection datasets.
             </div>
         </div>
         """, unsafe_allow_html=True)
         return
 
-    # Use Cached Dashboard Data (Zero redundant API calls!)
+    # Use Cached Dashboard Data
     dashboard_data = st.session_state.cached_dashboard_data
     kpis = dashboard_data["kpis"]
     charts = dashboard_data["charts"]
     ai_narrative = dashboard_data["ai_narrative"]
+    scope_desc = dashboard_data.get("scope_desc", "Active Dataset Selection")
 
-    # --- 3. Prominent Executive Actions Toolbar (Save + Export PDF) ---
+    # =========================================================================
+    # SECTION 3: ACTIONS TOOLBAR (SAVE VERSION + EXPORT PDF)
+    # =========================================================================
     with st.container(border=True):
-        col_hdr_title, col_btn_save, col_btn_pdf = st.columns([6.2, 2.3, 2.5])
+        col_hdr_title, col_btn_save, col_btn_pdf = st.columns([5.8, 2.2, 2.8])
         with col_hdr_title:
-            st.markdown('<div style="font-size: 15px; font-weight: 700; color: #0F172A; margin-top: 6px;">📊 Active Quality Dashboard Snapshot</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div>
+                <div style="font-size: 15px; font-weight: 700; color: #0F172A;">📊 Active Dashboard: {scope_desc}</div>
+                <div style="font-size: 12px; color: #64748B;">Generated via Gemini 2.5 Flash • Multi-variable statistical correlation</div>
+            </div>
+            """, unsafe_allow_html=True)
         
         with col_btn_save:
             if st.button("💾  Save as Version", use_container_width=True, key="btn_open_save_version_modal"):
@@ -181,7 +416,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
                 kpis=kpis,
                 ai_narrative=ai_narrative,
                 author="Alexander Wright (Quality Director)",
-                report_title="Plant-Wide Quality & Cpk Overview"
+                report_title=f"Quality Intelligence Report ({scope_desc})"
             )
             
             st.download_button(
@@ -195,14 +430,16 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
 
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
-    # --- 4. Executive KPI Cards ---
+    # =========================================================================
+    # SECTION 4: 4-KPI METRIC CARDS
+    # =========================================================================
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
     with col_kpi1:
         st.markdown(f"""<div class="qualiq-card" style="padding: 18px 20px; margin-bottom: 20px;">
 <div style="font-size: 12px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px;">Total Inspected</div>
 <div style="font-size: 26px; font-weight: 800; color: #0F172A; margin-top: 4px;">{kpis['total_inspected']}</div>
-<div style="font-size: 12px; color: #10B981; font-weight: 600; margin-top: 4px;">● Across 18 Datasets</div>
+<div style="font-size: 12px; color: #10B981; font-weight: 600; margin-top: 4px;">● {scope_desc}</div>
 </div>""", unsafe_allow_html=True)
 
     with col_kpi2:
@@ -226,90 +463,59 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
 <div style="font-size: 12px; color: #2563EB; font-weight: 600; margin-top: 4px;">● Stable Process Window</div>
 </div>""", unsafe_allow_html=True)
 
-    # --- 5. Charts Grid (2x2) with Chart-Level AI Insight Popovers ---
+    # =========================================================================
+    # SECTION 5: 2x2 PLOTLY GRAPHS GRID
+    # =========================================================================
     col_c1, col_c2 = st.columns(2)
 
-    # Chart 1: Defect Breakdown
     with col_c1:
         with st.container(border=True):
-            head_col1, head_col2 = st.columns([7.2, 2.8])
-            with head_col1:
-                st.markdown('<div style="font-size: 15px; font-weight: 700; color: #1E293B;">Defect Breakdown (Pareto Analysis)</div>', unsafe_allow_html=True)
-                st.markdown('<div style="font-size: 12px; color: #64748B; margin-bottom: 8px;">Non-conformance frequency by failure mode</div>', unsafe_allow_html=True)
-            with head_col2:
-                with st.popover("💡 AI Insight", use_container_width=True):
-                    render_chart_insight_content("defect_breakdown", "Defect Breakdown Pareto Analysis", {"top_defect": "Dimensional Drift (38.9%)", "second_defect": "Surface Porosity (26.3%)"})
-            
-            st.plotly_chart(charts["defect_breakdown"], use_container_width=True, key="plotly_pareto")
+            ch1_title, ch1_btn = st.columns([8, 2])
+            ch1_title.markdown("**Defect Pareto (80/20 Distribution)**")
+            with ch1_btn:
+                with st.popover("💡 Insight", use_container_width=True):
+                    st.markdown(generate_chart_action_insight("pareto", kpis))
+            st.plotly_chart(charts["pareto"], use_container_width=True, key="plotly_pareto")
 
-    # Chart 2: Machine Comparison
     with col_c2:
         with st.container(border=True):
-            head_col1, head_col2 = st.columns([7.2, 2.8])
-            with head_col1:
-                st.markdown('<div style="font-size: 15px; font-weight: 700; color: #1E293B;">Machine Defect Rate Comparison</div>', unsafe_allow_html=True)
-                st.markdown('<div style="font-size: 12px; color: #64748B; margin-bottom: 8px;">Station-wise variance vs 3.5% threshold</div>', unsafe_allow_html=True)
-            with head_col2:
-                with st.popover("💡 AI Insight", use_container_width=True):
-                    render_chart_insight_content("machine_comparison", "Machine Defect Rate Comparison", {"outlier": "Milling Station CNC-04 (7.8%)", "benchmark_avg": "2.4%"})
-            
-            st.plotly_chart(charts["machine_comparison"], use_container_width=True, key="plotly_machine")
-
-    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+            ch2_title, ch2_btn = st.columns([8, 2])
+            ch2_title.markdown("**Machine Defect Rate vs Upper Control Limit**")
+            with ch2_btn:
+                with st.popover("💡 Insight", use_container_width=True):
+                    st.markdown(generate_chart_action_insight("machine", kpis))
+            st.plotly_chart(charts["machine"], use_container_width=True, key="plotly_machine")
 
     col_c3, col_c4 = st.columns(2)
 
-    # Chart 3: Temporal Trend
     with col_c3:
         with st.container(border=True):
-            head_col1, head_col2 = st.columns([7.2, 2.8])
-            with head_col1:
-                st.markdown('<div style="font-size: 15px; font-weight: 700; color: #1E293B;">Shift Defect Rate Trend (14 Days)</div>', unsafe_allow_html=True)
-                st.markdown('<div style="font-size: 12px; color: #64748B; margin-bottom: 8px;">Shift A (Morning), Shift B (Evening), Shift C (Night)</div>', unsafe_allow_html=True)
-            with head_col2:
-                with st.popover("💡 AI Insight", use_container_width=True):
-                    render_chart_insight_content("defect_trend", "Shift Defect Rate Trend (14 Days)", {"peak_shift": "Shift C (Night Shift)", "peak_rate": "6.4%"})
-            
-            st.plotly_chart(charts["defect_trend"], use_container_width=True, key="plotly_trend")
+            ch3_title, ch3_btn = st.columns([8, 2])
+            ch3_title.markdown("**14-Day Shift Quality Trend Comparison**")
+            with ch3_btn:
+                with st.popover("💡 Insight", use_container_width=True):
+                    st.markdown(generate_chart_action_insight("trend", kpis))
+            st.plotly_chart(charts["trend"], use_container_width=True, key="plotly_trend")
 
-    # Chart 4: Tolerance Distribution
     with col_c4:
         with st.container(border=True):
-            head_col1, head_col2 = st.columns([7.2, 2.8])
-            with head_col1:
-                st.markdown('<div style="font-size: 15px; font-weight: 700; color: #1E293B;">Tolerance Deviation Distribution & Cpk</div>', unsafe_allow_html=True)
-                st.markdown('<div style="font-size: 12px; color: #64748B; margin-bottom: 8px;">Measurement histogram vs USL/LSL limits (±0.025 mm)</div>', unsafe_allow_html=True)
-            with head_col2:
-                with st.popover("💡 AI Insight", use_container_width=True):
-                    render_chart_insight_content("tolerance_distribution", "Tolerance Deviation Distribution & Cpk", {"mean_skew": "+0.008 mm", "usl": "+0.025 mm", "cpk": "1.28"})
-            
-            st.plotly_chart(charts["tolerance_distribution"], use_container_width=True, key="plotly_tolerance")
+            ch4_title, ch4_btn = st.columns([8, 2])
+            ch4_title.markdown("**Dimensional Tolerance Distribution (Cpk)**")
+            with ch4_btn:
+                with st.popover("💡 Insight", use_container_width=True):
+                    st.markdown(generate_chart_action_insight("distribution", kpis))
+            st.plotly_chart(charts["distribution"], use_container_width=True, key="plotly_distribution")
 
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
-    # --- 6. Executive AI Intelligence Narrative ---
+    # =========================================================================
+    # SECTION 6: AI QUALITY INTELLIGENCE NARRATIVE
+    # =========================================================================
     with st.container(border=True):
-        st.markdown('<div style="font-size: 16px; font-weight: 700; color: #0F172A; margin-bottom: 12px;">🤖 Executive Quality Intelligence Narrative</div>', unsafe_allow_html=True)
-        st.markdown(ai_narrative, unsafe_allow_html=False)
-
-def render_chart_insight_content(chart_id: str, chart_title: str, metrics: dict):
-    """Renders structured AI insight popover content for a specific chart."""
-    insight = generate_chart_action_insight(chart_id, chart_title, metrics)
-
-    if insight.get("formatted"):
-        st.markdown(insight["raw_text"])
-    else:
         st.markdown(f"""
-        <div style="min-width: 290px; padding: 2px 0;">
-            <div style="font-size: 13px; font-weight: 700; color: #0F172A; margin-bottom: 6px;">🔍 Key Observation</div>
-            <div style="font-size: 12.5px; color: #334155; line-height: 1.45; margin-bottom: 12px;">{insight['observation']}</div>
-
-            <div style="font-size: 13px; font-weight: 700; color: #D97706; margin-bottom: 6px;">⚠️ Root Cause Hypothesis</div>
-            <div style="font-size: 12.5px; color: #334155; line-height: 1.45; margin-bottom: 12px;">{insight['hypothesis']}</div>
-
-            <div style="font-size: 13px; font-weight: 700; color: #2563EB; margin-bottom: 6px;">🎯 Recommended Action Plan</div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: #334155; line-height: 1.45;">
-                {''.join([f'<li style="margin-bottom: 4px;">{act}</li>' for act in insight['actions']])}
-            </ul>
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+            <span style="font-size: 20px;">🤖</span>
+            <span style="font-size: 16px; font-weight: 700; color: #0F172A;">Gemini Executive Quality Intelligence Narrative</span>
         </div>
         """, unsafe_allow_html=True)
+        st.markdown(ai_narrative)
