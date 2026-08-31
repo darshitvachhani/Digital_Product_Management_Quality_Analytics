@@ -2,6 +2,7 @@ import streamlit as st
 from components.header import render_top_header
 from components.stepper import render_stepper
 from db.repository import create_full_process_workflow, update_full_process_workflow
+from utils.excel_generator import generate_checkpoint_template_excel, get_required_columns_for_checkpoint
 
 @st.dialog(" ", width="small")
 def show_success_modal(message: str = "Process configured successfully"):
@@ -27,7 +28,7 @@ def show_success_modal(message: str = "Process configured successfully"):
 def render_step4_view():
     """
     SCREEN 5 — STEP 4
-    Summary — Persists workflow to SQLite Database on Finish (Create & Edit Modes)
+    Summary & Reference Excel Template Generator
     """
     render_top_header()
     render_stepper(4)
@@ -58,44 +59,54 @@ def render_step4_view():
 </div>
 </div>""", unsafe_allow_html=True)
 
-    st.markdown('<div style="font-size: 15px; font-weight: 600; color: #1E293B; margin-bottom: 12px;">Workflow Configuration Summary</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background: #EFF6FF; border: 1px solid #BFDBFE; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
+        <div style="font-size: 13.5px; font-weight: 700; color: #1E40AF; margin-bottom: 4px;">📊 Checkpoint Quality Data Contracts & Sample Excel Reference Templates</div>
+        <div style="font-size: 12.5px; color: #3B82F6;">Download official pre-formatted Excel reference templates for each checkpoint below. These templates define the exact required column names to pass shopfloor upload validation.</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Build summary rows without leading indentation
-    if checkpoints:
-        rows = []
-        for idx, cp in enumerate(checkpoints, start=1):
-            rows.append(
-                f"<tr>"
-                f"<td style='font-weight: 600; color: #475569;'>{idx}</td>"
-                f"<td style='font-weight: 600; color: #0F172A;'>{cp['name']}</td>"
-                f"<td style='color: #475569;'>{cp.get('process', '')}</td>"
-                f"<td style='color: #334155; font-size: 13.5px; line-height: 1.45;'>{cp.get('summary', 'Standard tolerance verification.')}</td>"
-                f"</tr>"
-            )
-        rows_html = "\n".join(rows)
-    else:
-        rows_html = f"""<tr>
-<td style='font-weight: 600; color: #475569;'>1</td>
-<td style='font-weight: 600; color: #0F172A;'>{process_name} Gate Check</td>
-<td style='color: #475569;'>{steps[0] if steps else 'Standard Step'}</td>
-<td style='color: #334155; font-size: 13.5px; line-height: 1.45;'>Standard tolerance and dimension verification check for {process_name}.</td>
-</tr>"""
+    st.markdown('<div style="font-size: 15px; font-weight: 600; color: #1E293B; margin-bottom: 12px;">Configured Checkpoints & Downloadable Templates</div>', unsafe_allow_html=True)
 
-    table_html = f"""<table class="qualiq-table" style="margin-top: 0;">
-<thead>
-<tr>
-<th style="width: 8%;">Sequence</th>
-<th style="width: 26%;">Checkpoint</th>
-<th style="width: 26%;">Process Step</th>
-<th style="width: 40%;">Summary</th>
-</tr>
-</thead>
-<tbody>
-{rows_html}
-</tbody>
-</table>"""
+    effective_checkpoints = checkpoints if checkpoints else [
+        {"name": f"{process_name} Quality Gate 1", "process": steps[0] if steps else "Step 1", "summary": f"Standard quality gate for {process_name}."}
+    ]
 
-    st.markdown(table_html, unsafe_allow_html=True)
+    for idx, cp in enumerate(effective_checkpoints, start=1):
+        cp_name = cp.get("name", "Checkpoint")
+        req_cols = get_required_columns_for_checkpoint(cp_name)
+        excel_bytes = generate_checkpoint_template_excel(cp_name)
+        clean_filename = f"Template_{cp_name.replace(' ', '_').replace('/', '_')}.xlsx"
+
+        with st.container(border=True):
+            col_info, col_dl = st.columns([7.5, 2.5])
+            
+            with col_info:
+                st.markdown(f"""
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                    <span style="background: #E2E8F0; color: #334155; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 4px;">Gate #{idx}</span>
+                    <span style="font-size: 15px; font-weight: 700; color: #0F172A;">{cp_name}</span>
+                    <span style="font-size: 13px; color: #64748B;">• Step: {cp.get('process', steps[0] if steps else 'General')}</span>
+                </div>
+                <div style="font-size: 13px; color: #475569; margin-bottom: 8px; line-height: 1.4;">
+                    {cp.get('summary', 'Standard tolerance verification inspection.')}
+                </div>
+                <div style="font-size: 12px; color: #64748B;">
+                    <b>Required Column Schema:</b> <code>{' | '.join(req_cols)}</code>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col_dl:
+                st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+                st.download_button(
+                    label="📥 Sample Excel (.xlsx)",
+                    data=excel_bytes,
+                    file_name=clean_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_template_step4_{idx}_{cp_name[:15]}",
+                    use_container_width=True,
+                    help=f"Download official reference template for {cp_name}"
+                )
 
     # Bottom navigation
     st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)

@@ -3,6 +3,7 @@ from datetime import datetime
 from components.header import render_top_header
 from ai.dashboard_generator import generate_quality_analytics_dashboard, generate_saved_version_dashboard
 from ai.chart_insights import generate_chart_action_insight
+from utils.pdf_generator import generate_quality_report_pdf
 from db.repository import (
     get_all_dashboard_versions,
     get_dashboard_version_by_id,
@@ -68,19 +69,12 @@ def show_manage_versions_modal():
 
 def render_dashboard_view():
     """
-    QUALITY ANALYTICS DASHBOARD WITH PERSISTENT VERSIONING
-    - Saved Preset Selector Bar (Loads instantly with 0 API calls)
-    - Prompt-based AI Generator
-    - 'Save as Version' Snapshot Action
-    - Executive KPI Metric Cards
-    - 4 Grounded Plotly Quality Charts (2x2 Grid)
-    - Chart-Level Actionable AI Insights icon on each chart
-    - Executive AI Intelligence Summary
+    QUALITY ANALYTICS DASHBOARD WITH PERSISTENT VERSIONING & PDF EXPORT
     """
     render_top_header("Quality Analytics Dashboard")
 
     st.markdown("""<div style="font-size: 14.5px; color: #64748B; margin-top: -12px; margin-bottom: 20px;">
-AI-enhanced manufacturing quality analytics, root cause investigation, dynamic dashboard generation, and version preset management.
+AI-enhanced manufacturing quality analytics, root cause investigation, dynamic dashboard generation, and executive PDF reporting.
 </div>""", unsafe_allow_html=True)
 
     default_prompt = "Generate a quality analytics dashboard suitable to the uploaded data"
@@ -90,6 +84,8 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
     version_options = ["-- Custom Prompt / Select a Saved Version --"] + [
         f"v{v['id']}: {v['name']} ({format_date_str(v.get('created_at'))})" for v in saved_versions
     ]
+
+    has_dashboard = "cached_dashboard_data" in st.session_state and st.session_state.cached_dashboard_data is not None
 
     with st.container(border=True):
         col_ver_sel, col_ver_btn = st.columns([8.2, 2.8])
@@ -123,7 +119,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
         # --- 2. Prompt Input & Action Buttons ---
-        col_prompt, col_gen, col_save = st.columns([6.4, 2.3, 2.3])
+        col_prompt, col_gen = st.columns([8.2, 2.8])
 
         with col_prompt:
             st.markdown('<label class="form-label" style="font-size: 13px; margin-bottom: 4px; font-weight: 600;">✨ Natural Language Query / Analytics Prompt</label>', unsafe_allow_html=True)
@@ -137,7 +133,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
 
         with col_gen:
             st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
-            if st.button("✨  Generate", type="primary", use_container_width=True, key="btn_generate_dashboard"):
+            if st.button("✨  Generate Dashboard", type="primary", use_container_width=True, key="btn_generate_dashboard"):
                 with st.spinner("Analyzing quality datasets and generating intelligence dashboard with Gemini AI..."):
                     dashboard_data = generate_quality_analytics_dashboard(user_prompt)
                     st.session_state.cached_dashboard_data = dashboard_data
@@ -145,13 +141,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
                     st.session_state.last_loaded_version_id = None
                 st.rerun()
 
-        with col_save:
-            st.markdown('<div style="height: 22px;"></div>', unsafe_allow_html=True)
-            has_dashboard = "cached_dashboard_data" in st.session_state and st.session_state.cached_dashboard_data is not None
-            if st.button("💾  Save Version", disabled=not has_dashboard, use_container_width=True, key="btn_open_save_version_modal"):
-                show_save_version_modal(user_prompt, st.session_state.cached_dashboard_data)
-
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
     # If no dashboard has been generated yet, show readiness placeholder
     if "cached_dashboard_data" not in st.session_state or st.session_state.cached_dashboard_data is None:
@@ -160,7 +150,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
             <div style="font-size: 38px; margin-bottom: 10px;">📊</div>
             <div style="font-size: 18px; font-weight: 700; color: #0F172A; margin-bottom: 6px;">Ready to Generate or Load Quality Analytics Dashboard</div>
             <div style="font-size: 14px; color: #64748B; max-width: 580px; margin: 0 auto 18px auto; line-height: 1.5;">
-                Select a <b>Saved Version</b> from the dropdown above to load an instant snapshot, or click <b>✨ Generate</b> to synthesize custom analytics across 18 production datasets using Gemini AI.
+                Select a <b>Saved Version</b> from the dropdown above to load an instant snapshot, or click <b>✨ Generate Dashboard</b> to synthesize custom analytics across 18 production datasets using Gemini AI. Once generated, you can export the official <b>Executive PDF Report</b>.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -172,7 +162,40 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
     charts = dashboard_data["charts"]
     ai_narrative = dashboard_data["ai_narrative"]
 
-    # --- 3. Executive KPI Cards ---
+    # --- 3. Prominent Executive Actions Toolbar (Save + Export PDF) ---
+    with st.container(border=True):
+        col_hdr_title, col_btn_save, col_btn_pdf = st.columns([6.2, 2.3, 2.5])
+        with col_hdr_title:
+            st.markdown('<div style="font-size: 15px; font-weight: 700; color: #0F172A; margin-top: 6px;">📊 Active Quality Dashboard Snapshot</div>', unsafe_allow_html=True)
+        
+        with col_btn_save:
+            if st.button("💾  Save as Version", use_container_width=True, key="btn_open_save_version_modal"):
+                show_save_version_modal(st.session_state.get("active_prompt", default_prompt), dashboard_data)
+
+        with col_btn_pdf:
+            report_date_str = datetime.now().strftime("%Y-%m-%d")
+            pdf_filename = f"QualIQ_Executive_Quality_Report_{report_date_str}.pdf"
+            
+            pdf_data = generate_quality_report_pdf(
+                prompt=st.session_state.get("active_prompt", default_prompt),
+                kpis=kpis,
+                ai_narrative=ai_narrative,
+                author="Alexander Wright (Quality Director)",
+                report_title="Plant-Wide Quality & Cpk Overview"
+            )
+            
+            st.download_button(
+                label="📥  Download PDF Report",
+                data=pdf_data,
+                file_name=pdf_filename,
+                mime="application/pdf",
+                use_container_width=True,
+                key="btn_download_dashboard_pdf"
+            )
+
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+    # --- 4. Executive KPI Cards ---
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
     with col_kpi1:
@@ -203,7 +226,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
 <div style="font-size: 12px; color: #2563EB; font-weight: 600; margin-top: 4px;">● Stable Process Window</div>
 </div>""", unsafe_allow_html=True)
 
-    # --- 4. Charts Grid (2x2) with Chart-Level AI Insight Popovers ---
+    # --- 5. Charts Grid (2x2) with Chart-Level AI Insight Popovers ---
     col_c1, col_c2 = st.columns(2)
 
     # Chart 1: Defect Breakdown
@@ -264,7 +287,7 @@ AI-enhanced manufacturing quality analytics, root cause investigation, dynamic d
 
     st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
 
-    # --- 5. Executive AI Intelligence Narrative ---
+    # --- 6. Executive AI Intelligence Narrative ---
     with st.container(border=True):
         st.markdown('<div style="font-size: 16px; font-weight: 700; color: #0F172A; margin-bottom: 12px;">🤖 Executive Quality Intelligence Narrative</div>', unsafe_allow_html=True)
         st.markdown(ai_narrative, unsafe_allow_html=False)
