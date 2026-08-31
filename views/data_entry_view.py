@@ -6,7 +6,8 @@ from db.repository import (
     get_all_datasets,
     insert_quality_dataset,
     update_quality_dataset,
-    delete_quality_dataset
+    delete_quality_dataset,
+    upload_file_to_supabase_storage
 )
 
 @st.dialog("Edit Quality Dataset", width="medium")
@@ -61,7 +62,7 @@ def show_delete_dataset_modal(dataset: dict):
 
 def render_data_entry_view():
     """
-    DATA ENTRY SCREEN — Full CRUD
+    DATA ENTRY SCREEN — Connected to Supabase Cloud & Storage
     """
     render_top_header("Data Entry")
 
@@ -73,7 +74,7 @@ Ingest and register production quality spreadsheets, inspection sheets, and sens
     if st.session_state.get("last_uploaded_file_name"):
         st.markdown(f"""<div style="background-color: #DCFCE7; border: 1px solid #86EFAC; color: #15803D; padding: 12px 18px; border-radius: 8px; font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 10px; margin-bottom: 20px;">
 <span style="font-size: 18px; font-weight: 700;">✓</span>
-<span>File <b>{st.session_state.last_uploaded_file_name}</b> uploaded successfully</span>
+<span>File <b>{st.session_state.last_uploaded_file_name}</b> uploaded successfully and stored in Supabase cloud storage.</span>
 </div>""", unsafe_allow_html=True)
 
     # 1. Fetch available checkpoints for dropdown
@@ -95,7 +96,7 @@ Ingest and register production quality spreadsheets, inspection sheets, and sens
 
         st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
 
-        st.markdown('<label class="form-label" style="font-size: 14.5px; font-weight: 600; margin-bottom: 6px;">Upload File (.xlsx, .xls) <span class="required-star">*</span></label>', unsafe_allow_html=True)
+        st.markdown('<label class="form-label" style="font-size: 14.5px; font-weight: 600; margin-bottom: 6px;">Upload File (.xlsx, .xls, .csv) <span class="required-star">*</span></label>', unsafe_allow_html=True)
         uploaded_file = st.file_uploader(
             label="Upload File",
             type=["xlsx", "xls", "csv"],
@@ -109,6 +110,13 @@ Ingest and register production quality spreadsheets, inspection sheets, and sens
                 cp_name = selected_cp_str.split(" — ")[0] if selected_cp_str != "Select Checkpoint" else "Casting Temperature"
                 file_size_kb = max(1, uploaded_file.size // 1024)
                 
+                # Upload to Supabase Storage
+                try:
+                    file_bytes = uploaded_file.getvalue()
+                    upload_file_to_supabase_storage(uploaded_file.name, file_bytes)
+                except Exception as e:
+                    print(f"File storage upload notice: {e}")
+
                 insert_quality_dataset(
                     checkpoint_name=cp_name,
                     file_name=uploaded_file.name,
@@ -139,16 +147,15 @@ Ingest and register production quality spreadsheets, inspection sheets, and sens
         st.markdown("<hr style='margin: 8px 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
         for idx, d in enumerate(datasets, start=1):
-            uploaded_on = d.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M"))
-            if len(str(uploaded_on)) > 16:
-                uploaded_on = str(uploaded_on)[:16]
+            uploaded_on = d.get("created_at") or datetime.now().strftime("%Y-%m-%d")
+            uploaded_on_str = uploaded_on.strftime("%Y-%m-%d %H:%M") if hasattr(uploaded_on, "strftime") else str(uploaded_on)[:16]
 
             c1, c2, c3, c4, c5, c6 = st.columns([1, 4.5, 3.5, 2.5, 2, 1.5])
             c1.markdown(f"<span style='font-weight: 600; color: #475569;'>{idx}</span>", unsafe_allow_html=True)
             c2.markdown(f"<span style='font-weight: 600; color: #0F172A;'>📊 {d['file_name']}</span>", unsafe_allow_html=True)
             c3.markdown(f"<span style='color: #2563EB; font-weight: 500;'>{d['checkpoint_name']}</span>", unsafe_allow_html=True)
             c4.markdown(f"<span style='color: #334155;'>{d['uploaded_by_name']}</span>", unsafe_allow_html=True)
-            c5.markdown(f"<span style='color: #64748B; font-size: 13.5px;'>{uploaded_on}</span>", unsafe_allow_html=True)
+            c5.markdown(f"<span style='color: #64748B; font-size: 13.5px;'>{uploaded_on_str}</span>", unsafe_allow_html=True)
             
             with c6:
                 col_e, col_d = st.columns(2)

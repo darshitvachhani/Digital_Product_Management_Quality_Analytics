@@ -1,0 +1,33 @@
+# Environment variables and secrets
+.env
+.env.*
+.env.local
+.streamlit/secrets.toml
+secrets.toml
+
+# Python bytecode & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+
+# Local databases
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
+*.sqlite3
+
+# Operating System & IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Artifacts and logs
+*.log
+scratch/
